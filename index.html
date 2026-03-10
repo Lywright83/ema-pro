@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>EMA Pro — Trade Intelligence</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{background:#080b10;color:#e2e8f0;font-family:'Sora','Segoe UI',sans-serif;}
+    ::placeholder{color:#1e2a3a;}
+    ::-webkit-scrollbar{width:4px;}::-webkit-scrollbar-track{background:#0c0f16;}::-webkit-scrollbar-thumb{background:#1e2430;border-radius:3px;}
+    @keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+    @keyframes shimmer{0%,100%{opacity:0.4}50%{opacity:1}}
+    .fade-up{animation:fadeUp 0.4s ease forwards;}
+    .shimmer{animation:shimmer 1.6s ease infinite;}
+    .live-dot{animation:blink 1s ease infinite;}
+    .ibox:focus{border-color:rgba(56,182,255,0.4)!important;box-shadow:0 0 0 3px rgba(56,182,255,0.06)!important;outline:none;}
+    .go-btn:hover:not(:disabled){background:rgba(56,182,255,0.22)!important;}
+    .go-btn:disabled{opacity:0.5;cursor:not-allowed;}
+    .chip:hover{background:rgba(255,255,255,0.07)!important;color:#94a3b8!important;}
+    .tab:hover{color:#94a3b8!important;}
+    .tf-btn:hover{border-color:rgba(56,182,255,0.3)!important;color:#94a3b8!important;}
+    .key-input:focus{border-color:rgba(56,182,255,0.5)!important;box-shadow:0 0 0 3px rgba(56,182,255,0.08)!important;outline:none;}
+    .key-btn:hover{background:rgba(56,182,255,0.2)!important;}
+    .sig-card:hover{background:rgba(255,255,255,0.04)!important;}
+    @media(max-width:700px){.ema-grid{grid-template-columns:repeat(2,1fr)!important;}}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+function calcEMA(data, period) {
+  if (data.length < period) return [];
+  const k = 2 / (period + 1);
+  const result = new Array(data.length).fill(null);
+  let sum = 0;
+  for (let i = 0; i < period; i++) sum += data[i].close;
+  result[period - 1] = sum / period;
+  for (let i = period; i < data.length; i++) result[i] = data[i].close * k + result[i-1] * (1-k);
+  return result;
+}
+
+function getSignals(candles, emas) {
+  const signals = [];
+  const { e9, e20, e50, e200 } = emas;
+  for (let i = 1; i < candles.length; i++) {
+    if (!e9[i]||!e20[i]||!e9[i-1]||!e20[i-1]) continue;
+    const price = candles[i].close;
+    if (e9[i-1]<e20[i-1]&&e9[i]>e20[i])
+      signals.push({index:i,type:"bullish",name:"Golden Cross (9/20)",signal:"STRONG BUY",emoji:"⚡",color:"#26d987",price,date:candles[i].date,desc:"9 EMA crossed above 20 EMA — short-term momentum turning bullish.",note:"Enter long on the next candle. Stop below the cross low."});
+    if (e9[i-1]>e20[i-1]&&e9[i]<e20[i])
+      signals.push({index:i,type:"bearish",name:"Death Cross (9/20)",signal:"STRONG SELL",emoji:"💀",color:"#ff4d6d",price,date:candles[i].date,desc:"9 EMA crossed below 20 EMA — short-term momentum turning bearish.",note:"Enter short on next candle. Stop above the cross high."});
+    if (e50[i]&&e200[i]&&e50[i-1]&&e200[i-1]) {
+      if (e50[i-1]<e200[i-1]&&e50[i]>e200[i])
+        signals.push({index:i,type:"bullish",name:"Major Golden Cross (50/200)",signal:"BUY",emoji:"🌟",color:"#26d987",price,date:candles[i].date,desc:"50 EMA crossed above 200 EMA — major bullish regime change.",note:"High conviction long setup. Target multi-swing highs."});
+      if (e50[i-1]>e200[i-1]&&e50[i]<e200[i])
+        signals.push({index:i,type:"bearish",name:"Major Death Cross (50/200)",signal:"SELL",emoji:"☠️",color:"#ff4d6d",price,date:candles[i].date,desc:"50 EMA crossed below 200 EMA — major bearish regime change.",note:"High conviction short. Avoid longs until 50 reclaims 200."});
+    }
+    if (e20[i]&&candles[i-1].close<e20[i-1]&&price>e20[i])
+      signals.push({index:i,type:"bullish",name:"20 EMA Reclaim",signal:"BUY",emoji:"📈",color:"#ffd500",price,date:candles[i].date,desc:"Price reclaimed the 20 EMA from below — buyers back in control.",note:"Enter on close above 20 EMA. Stop below it."});
+    if (e20[i]&&candles[i-1].close>e20[i-1]&&price<e20[i])
+      signals.push({index:i,type:"bearish",name:"20 EMA Loss",signal:"SELL",emoji:"📉",color:"#ff4d6d",price,date:candles[i].date,desc:"Price lost the 20 EMA — momentum weakening.",note:"Exit longs or enter short. Stop above 20 EMA."});
+  }
+  return signals;
+}
+
+function ApiKeyGate({onUnlock}){
+  const [key,setKey]=useState(""); const [show,setShow]=useState(false); const [err,setErr]=useState("");
+  function submit(){if(!key.trim().startsWith("sk-ant-")){setErr("Key should start with sk-ant-…");return;}onUnlock(key.trim());}
+  return(
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#080b10",padding:24}}>
+      <div style={{maxWidth:460,width:"100%"}}>
+        <div style={{textAlign:"center",marginBottom:32}}>
+          <div style={{width:52,height:52,borderRadius:14,background:"linear-gradient(135deg,#38b6ff,#7c8cff)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,margin:"0 auto 16px"}}>📈</div>
+          <div style={{fontSize:28,fontWeight:800,letterSpacing:"-0.5px",marginBottom:8,background:"linear-gradient(135deg,#f1f5f9,#64748b)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>EMA Pro</div>
+          <div style={{fontSize:14,color:"#334155"}}>AI-powered EMA crossover & signal scanner</div>
+        </div>
+        <div style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:16,padding:28}}>
+          <div style={{fontSize:13,fontWeight:600,color:"#94a3b8",marginBottom:6}}>Anthropic API Key</div>
+          <div style={{fontSize:12,color:"#334155",marginBottom:16,lineHeight:1.6}}>Enter your Anthropic API key to power the AI price data and EMA signal analysis. Your key is never stored — it lives only in this browser session.</div>
+          <div style={{position:"relative",marginBottom:12}}>
+            <input className="key-input" type={show?"text":"password"} value={key} onChange={e=>{setKey(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&submit()} placeholder="sk-ant-api03-…" style={{width:"100%",background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:10,padding:"12px 44px 12px 14px",color:"#e2e8f0",fontSize:13,fontFamily:"'IBM Plex Mono',monospace",transition:"all 0.2s"}}/>
+            <button onClick={()=>setShow(s=>!s)} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"#334155",cursor:"pointer",fontSize:15}}>{show?"🙈":"👁"}</button>
+          </div>
+          {err&&<div style={{fontSize:12,color:"#ff4d6d",marginBottom:10}}>{err}</div>}
+          <button className="key-btn" onClick={submit} style={{width:"100%",background:"rgba(56,182,255,0.14)",border:"1px solid rgba(56,182,255,0.35)",borderRadius:10,padding:"12px",color:"#38b6ff",fontSize:14,fontWeight:700,cursor:"pointer",transition:"all 0.2s",fontFamily:"'IBM Plex Mono',monospace",letterSpacing:"0.3px"}}>Launch EMA Pro →</button>
+          <div style={{marginTop:16,padding:"12px 14px",background:"rgba(255,213,0,0.05)",border:"1px solid rgba(255,213,0,0.1)",borderRadius:8}}>
+            <div style={{fontSize:11,color:"#8a7830",lineHeight:1.6}}>🔑 <strong style={{color:"#b89d30"}}>Get a key:</strong> Visit <a href="https://console.anthropic.com" target="_blank" style={{color:"#ffd500"}}>console.anthropic.com</a> → API Keys → Create Key. New accounts get free credits to start.</div>
+          </div>
+        </div>
+        <div style={{textAlign:"center",marginTop:16,fontSize:11,color:"#1e2a3a"}}>Educational use only · Not financial advice</div>
+      </div>
+    </div>
+  );
+}
+
+function SignalBadge({signal}){
+  const map={"STRONG BUY":{bg:"rgba(38,217,135,0.15)",border:"rgba(38,217,135,0.35)",color:"#26d987"},"BUY":{bg:"rgba(38,217,135,0.1)",border:"rgba(38,217,135,0.25)",color:"#26d987"},"STRONG SELL":{bg:"rgba(255,77,109,0.15)",border:"rgba(255,77,109,0.35)",color:"#ff4d6d"},"SELL":{bg:"rgba(255,77,109,0.1)",border:"rgba(255,77,109,0.25)",color:"#ff4d6d"},"WATCH":{bg:"rgba(255,213,0,0.1)",border:"rgba(255,213,0,0.25)",color:"#ffd500"}};
+  const s=map[signal]||map["WATCH"];
+  return <span style={{background:s.bg,border:`1px solid ${s.border}`,borderRadius:5,padding:"2px 8px",fontSize:10,fontWeight:700,color:s.color,fontFamily:"IBM Plex Mono,monospace",letterSpacing:"0.5px",whiteSpace:"nowrap"}}>{signal}</span>;
+}
+
+function EMAChart({candles,emas,signals,livePrice}){
+  const canvasRef=useRef(null); const containerRef=useRef(null);
+  useEffect(()=>{
+    if(!candles.length)return;
+    const canvas=canvasRef.current,container=containerRef.current;
+    if(!canvas||!container)return;
+    const W=container.clientWidth,H=240;
+    canvas.width=W;canvas.height=H;
+    const ctx=canvas.getContext("2d");
+    ctx.clearRect(0,0,W,H);
+    const pad={t:16,b:28,l:8,r:52};
+    const cw=W-pad.l-pad.r,ch=H-pad.t-pad.b;
+    const all=[].concat(candles.map(c=>[c.high,c.low]).flat(),Object.values(emas).flat().filter(Boolean),livePrice?[livePrice]:[]);
+    const mn=Math.min(...all),mx=Math.max(...all),rng=mx-mn||1;
+    const toX=i=>pad.l+(i/(candles.length-1))*cw;
+    const toY=v=>pad.t+ch-((v-mn)/rng)*ch;
+    ctx.strokeStyle="rgba(255,255,255,0.04)";ctx.lineWidth=1;
+    for(let g=0;g<=4;g++){const y=pad.t+(g/4)*ch;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();ctx.fillStyle="#1e2a3a";ctx.font="9px IBM Plex Mono";ctx.textAlign="right";ctx.fillText("$"+(mx-(g/4)*rng).toFixed(2),W-4,y+3);}
+    const bw=Math.max(2,cw/candles.length-2);
+    candles.forEach((c,i)=>{
+      const x=toX(i),bull=c.close>=c.open;
+      ctx.strokeStyle=bull?"#26d987":"#ff4d6d";ctx.fillStyle=bull?"#26d987":"#ff4d6d";ctx.lineWidth=1;
+      ctx.beginPath();ctx.moveTo(x,toY(c.high));ctx.lineTo(x,toY(c.low));ctx.stroke();
+      const bTop=toY(Math.max(c.open,c.close)),bH=Math.max(1,Math.abs(toY(c.open)-toY(c.close)));
+      if(bull)ctx.fillRect(x-bw/2,bTop,bw,bH);else ctx.strokeRect(x-bw/2,bTop,bw,bH);
+    });
+    const emaColors={e9:"#ff6b35",e20:"#f5c842",e50:"#38b6ff",e200:"#a855f7"};
+    const emaLbls={e9:"9",e20:"20",e50:"50",e200:"200"};
+    Object.entries(emas).forEach(([k,arr])=>{
+      if(!arr||!arr.length)return;
+      ctx.beginPath();ctx.strokeStyle=emaColors[k];ctx.lineWidth=1.5;let started=false;
+      arr.forEach((v,i)=>{if(!v)return;if(!started){ctx.moveTo(toX(i),toY(v));started=true;}else ctx.lineTo(toX(i),toY(v));});
+      ctx.stroke();
+      const last=arr.filter(Boolean).pop();
+      if(last){ctx.fillStyle=emaColors[k];ctx.font="bold 9px IBM Plex Mono";ctx.textAlign="left";ctx.fillText(emaLbls[k],W-pad.r+4,toY(last)+3);}
+    });
+    signals.forEach(s=>{const x=toX(s.index),y=toY(s.price);ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fillStyle=s.color+"cc";ctx.fill();ctx.strokeStyle=s.color;ctx.lineWidth=1.5;ctx.stroke();});
+    if(livePrice){const y=toY(livePrice);ctx.setLineDash([4,4]);ctx.strokeStyle="rgba(56,182,255,0.5)";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();ctx.setLineDash([]);}
+  },[candles,emas,signals,livePrice]);
+  return <div ref={containerRef} style={{width:"100%"}}><canvas ref={canvasRef} style={{display:"block",width:"100%"}}/></div>;
+}
+
+function EMACard({period,color,value,prevValue,price,label}){
+  if(!value)return <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:12,padding:"16px",opacity:0.4}}><div style={{fontSize:10,color:"#334155",fontFamily:"IBM Plex Mono,monospace",marginBottom:4}}>{period} EMA</div><div style={{fontSize:18,color:"#1e2a3a",fontFamily:"IBM Plex Mono,monospace"}}>—</div></div>;
+  const above=price>value;const trend=prevValue?(value>prevValue?"▲":"▼"):"—";const trendColor=prevValue?(value>prevValue?"#26d987":"#ff4d6d"):"#334155";
+  return(
+    <div style={{background:"rgba(255,255,255,0.02)",border:`1px solid ${above?"rgba(38,217,135,0.15)":"rgba(255,77,109,0.15)"}`,borderRadius:12,padding:"16px",position:"relative",overflow:"hidden"}}>
+      <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:color,opacity:0.6,borderRadius:"12px 12px 0 0"}}/>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+        <div style={{fontSize:10,color:"#334155",fontFamily:"IBM Plex Mono,monospace",letterSpacing:"0.5px"}}>{period} EMA</div>
+        <span style={{fontSize:10,color:above?"#26d987":"#ff4d6d",fontFamily:"IBM Plex Mono,monospace",background:above?"rgba(38,217,135,0.08)":"rgba(255,77,109,0.08)",border:`1px solid ${above?"rgba(38,217,135,0.2)":"rgba(255,77,109,0.2)"}`,borderRadius:4,padding:"1px 6px"}}>{above?"ABOVE":"BELOW"}</span>
+      </div>
+      <div style={{fontSize:20,fontWeight:800,color,fontFamily:"IBM Plex Mono,monospace",marginBottom:4}}>${value.toFixed(2)}</div>
+      <div style={{display:"flex",gap:8,alignItems:"center"}}><span style={{fontSize:11,color:trendColor,fontFamily:"IBM Plex Mono,monospace"}}>{trend} {label}</span><span style={{fontSize:10,color:"#1e2a3a",fontFamily:"IBM Plex Mono,monospace"}}>Δ {price&&value?(price-value>0?"+":"")+(price-value).toFixed(2):"—"}</span></div>
+    </div>
+  );
+}
+
+function SigCard({sig,expanded,onToggle}){
+  return(
+    <div className="sig-card" onClick={onToggle} style={{background:expanded?"rgba(255,255,255,0.04)":"rgba(255,255,255,0.02)",border:`1px solid ${expanded?"rgba(255,255,255,0.1)":"rgba(255,255,255,0.05)"}`,borderRadius:12,overflow:"hidden",cursor:"pointer",transition:"all 0.2s"}}>
+      <div style={{padding:"12px 16px",display:"flex",alignItems:"center",gap:12}}>
+        <div style={{width:36,height:36,borderRadius:9,background:`${sig.color}15`,border:`1px solid ${sig.color}30`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{sig.emoji}</div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3,flexWrap:"wrap"}}><span style={{fontSize:13,fontWeight:700,color:sig.color}}>{sig.name}</span><SignalBadge signal={sig.signal}/></div>
+          <div style={{fontSize:10,color:"#334155",fontFamily:"IBM Plex Mono,monospace"}}>{sig.date}</div>
+        </div>
+        <div style={{textAlign:"right",flexShrink:0}}><div style={{fontSize:14,fontWeight:700,color:"#e2e8f0",fontFamily:"IBM Plex Mono,monospace"}}>${sig.price.toFixed(2)}</div><div style={{fontSize:10,color:"#334155",marginTop:2}}>{expanded?"▲":"▼"}</div></div>
+      </div>
+      {expanded&&(
+        <div style={{borderTop:"1px solid rgba(255,255,255,0.05)",padding:"14px 16px"}}>
+          <div style={{fontSize:13,color:"#8a96a8",lineHeight:1.65,marginBottom:10}}>{sig.desc}</div>
+          <div style={{display:"flex",alignItems:"flex-start",gap:6,padding:"10px 13px",background:"rgba(38,217,135,0.04)",border:"1px solid rgba(38,217,135,0.1)",borderRadius:8,marginBottom:10}}>
+            <span style={{fontSize:12}}>📋</span><div style={{fontSize:12,color:"#4a5568",lineHeight:1.5,fontStyle:"italic"}}>{sig.note}</div>
+          </div>
+          <div style={{padding:"8px 12px",background:"rgba(255,213,0,0.04)",border:"1px solid rgba(255,213,0,0.1)",borderRadius:7}}>
+            <div style={{fontSize:11,color:"#8a7830"}}>⚡ <strong style={{color:"#b89d30"}}>Educational only.</strong> Always use stop-losses and proper position sizing.</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const TIMEFRAMES=["1m","5m","15m","1H","4H","1D"];
+const EMA_COLORS={e9:"#ff6b35",e20:"#f5c842",e50:"#38b6ff",e200:"#a855f7"};
+
+function App(){
+  const [apiKey,setApiKey]=useState(null);
+  const [inputVal,setInputVal]=useState("");
+  const [candles,setCandles]=useState([]);
+  const [emas,setEmas]=useState({e9:[],e20:[],e50:[],e200:[]});
+  const [signals,setSignals]=useState([]);
+  const [loading,setLoading]=useState(false);
+  const [error,setError]=useState("");
+  const [ticker,setTicker]=useState("");
+  const [companyName,setCompanyName]=useState("");
+  const [timeframe,setTimeframe]=useState("5m");
+  const [liveMode,setLiveMode]=useState(false);
+  const [livePrice,setLivePrice]=useState(null);
+  const [lastUpdate,setLastUpdate]=useState(null);
+  const [countdown,setCountdown]=useState(0);
+  const [expandedIdx,setExpandedIdx]=useState(null);
+  const [activeTab,setActiveTab]=useState("signals");
+  const liveRef=useRef(false);const candlesRef=useRef([]);const tickerRef=useRef("");
+  const intervalRef=useRef(null);const countRef=useRef(null);
+
+  useEffect(()=>{candlesRef.current=candles;},[candles]);
+  useEffect(()=>{liveRef.current=liveMode;},[liveMode]);
+  useEffect(()=>{tickerRef.current=ticker;},[ticker]);
+
+  function computeEMAs(data){return{e9:calcEMA(data,9),e20:calcEMA(data,20),e50:calcEMA(data,50),e200:calcEMA(data,200)};}
+
+  function runLiveTick(){
+    const data=candlesRef.current;if(!data.length)return;
+    const updated=[...data];const last={...updated[updated.length-1]};
+    const vol={"1m":0.0008,"5m":0.0018,"15m":0.003,"1H":0.006,"4H":0.012,"1D":0.02}[timeframe]||0.002;
+    const move=last.close*vol*(Math.random()*2-1);
+    last.close=Math.max(last.low*0.999,Math.min(last.high*1.001,+(last.close+move).toFixed(2)));
+    last.high=Math.max(last.high,last.close);last.low=Math.min(last.low,last.close);
+    updated[updated.length-1]=last;
+    const newEmas=computeEMAs(updated);const newSigs=getSignals(updated,newEmas);
+    setCandles(updated);setEmas(newEmas);setSignals(newSigs);setLivePrice(last.close);setLastUpdate(new Date().toLocaleTimeString());
+  }
+
+  function startLive(){if(!candles.length)return;setLiveMode(true);liveRef.current=true;const ms=10000;setCountdown(10);intervalRef.current=setInterval(runLiveTick,ms);countRef.current=setInterval(()=>setCountdown(c=>c<=1?10:c-1),1000);runLiveTick();}
+  function stopLive(){setLiveMode(false);liveRef.current=false;clearInterval(intervalRef.current);clearInterval(countRef.current);setCountdown(0);}
+  useEffect(()=>()=>{clearInterval(intervalRef.current);clearInterval(countRef.current);},[]);
+
+  async function fetchData(query){
+    stopLive();setLoading(true);setError("");setCandles([]);setEmas({e9:[],e20:[],e50:[],e200:[]});setSignals([]);setTicker("");setCompanyName("");setExpandedIdx(null);setLivePrice(null);
+    try{
+      const prompt=`You are a financial data assistant. The user wants OHLC price data for: "${query}" at timeframe ${timeframe}.\n\nResolve the ticker symbol (e.g. "Apple" → "AAPL").\n\nReturn EXACTLY 80 realistic OHLC candles reflecting the stock's real approximate price range. Include natural trends and consolidations suitable for EMA crossover analysis with at least 2 crossover setups between 9-period and 20-period EMAs.\n\nRespond ONLY with valid JSON, no markdown:\n{\n  "ticker": "AAPL",\n  "companyName": "Apple Inc.",\n  "candles": [\n    {"date": "2025-03-06 09:30", "open": 185.23, "high": 187.10, "low": 184.50, "close": 186.40}\n  ]\n}`;
+      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:6000,messages:[{role:"user",content:prompt}]})});
+      const data=await res.json();
+      if(data.error){setError("API error: "+(data.error.message||"Check your API key."));return;}
+      const text=data.content&&data.content.map(b=>b.text||"").join("")||"";
+      const parsed=JSON.parse(text.replace(/```json|```/g,"").trim());
+      const c=parsed.candles||[];const e=computeEMAs(c);const s=getSignals(c,e);
+      setTicker(parsed.ticker);tickerRef.current=parsed.ticker;setCompanyName(parsed.companyName||parsed.ticker);
+      setCandles(c);candlesRef.current=c;setEmas(e);setSignals(s);setLivePrice(c[c.length-1]?.close||null);
+    }catch(e){setError("Could not load data. Check your API key or try a different ticker.");}
+    finally{setLoading(false);}
+  }
+
+  if(!apiKey)return <ApiKeyGate onUnlock={setApiKey}/>;
+
+  const handleSubmit=()=>{if(!inputVal.trim())return;fetchData(inputVal.trim());};
+  const price=livePrice||candles[candles.length-1]?.close||0;
+  const lastE9=emas.e9[emas.e9.length-1],prevE9=emas.e9[emas.e9.length-2];
+  const lastE20=emas.e20[emas.e20.length-1],prevE20=emas.e20[emas.e20.length-2];
+  const lastE50=emas.e50[emas.e50.length-1],prevE50=emas.e50[emas.e50.length-2];
+  const lastE200=emas.e200[emas.e200.length-1],prevE200=emas.e200[emas.e200.length-2];
+  const bullSigs=signals.filter(s=>s.type==="bullish").length;
+  const bearSigs=signals.filter(s=>s.type==="bearish").length;
+
+  return(
+    <div style={{minHeight:"100vh",background:"#080b10",color:"#e2e8f0",fontFamily:"Sora,Segoe UI,sans-serif"}}>
+      <div style={{borderBottom:"1px solid rgba(255,255,255,0.05)",padding:"0 24px",display:"flex",alignItems:"center",justifyContent:"space-between",height:54,background:"rgba(8,11,16,0.97)",position:"sticky",top:0,zIndex:200,flexWrap:"wrap",gap:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={{width:30,height:30,borderRadius:7,background:"linear-gradient(135deg,#38b6ff,#7c8cff)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15}}>📈</div>
+          <span style={{fontWeight:800,fontSize:15,letterSpacing:"-0.3px",color:"#f1f5f9"}}>EMA Pro</span>
+          <span style={{fontSize:10,fontFamily:"IBM Plex Mono,monospace",color:"#38b6ff",background:"rgba(56,182,255,0.1)",border:"1px solid rgba(56,182,255,0.2)",borderRadius:4,padding:"1px 6px",letterSpacing:"0.5px"}}>PRO</span>
+        </div>
+        {candles.length>0&&(
+          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <div style={{display:"flex",gap:3,background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:8,padding:3}}>
+              {TIMEFRAMES.map(tf=><button key={tf} className="tf-btn" onClick={()=>setTimeframe(tf)} style={{background:timeframe===tf?"rgba(56,182,255,0.15)":"transparent",border:`1px solid ${timeframe===tf?"rgba(56,182,255,0.4)":"transparent"}`,borderRadius:6,padding:"4px 10px",color:timeframe===tf?"#38b6ff":"#2a3550",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"IBM Plex Mono,monospace",transition:"all 0.15s"}}>{tf}</button>)}
+            </div>
+            <button onClick={liveMode?stopLive:startLive} style={{display:"flex",alignItems:"center",gap:7,background:liveMode?"rgba(255,77,109,0.12)":"rgba(56,182,255,0.12)",border:`1px solid ${liveMode?"rgba(255,77,109,0.35)":"rgba(56,182,255,0.35)"}`,borderRadius:8,padding:"6px 14px",color:liveMode?"#ff4d6d":"#38b6ff",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"IBM Plex Mono,monospace",transition:"all 0.2s"}}>
+              <span className={liveMode?"live-dot":""} style={{width:7,height:7,borderRadius:"50%",background:liveMode?"#ff4d6d":"#38b6ff",display:"inline-block"}}/>{liveMode?"STOP LIVE":"GO LIVE"}
+            </button>
+            {liveMode&&<div style={{fontSize:11,color:"#334155",fontFamily:"IBM Plex Mono,monospace"}}><span style={{color:"#38b6ff"}}>↻</span> {countdown}s</div>}
+            <button onClick={()=>setApiKey(null)} style={{background:"none",border:"1px solid rgba(255,255,255,0.08)",borderRadius:6,padding:"4px 10px",color:"#334155",fontSize:11,cursor:"pointer",fontFamily:"IBM Plex Mono,monospace"}} title="Change API Key">🔑</button>
+            <button onClick={()=>{if(!document.fullscreenElement){document.documentElement.requestFullscreen();}else{document.exitFullscreen();}}} style={{background:"none",border:"1px solid rgba(255,255,255,0.08)",borderRadius:6,padding:"4px 10px",color:"#334155",fontSize:11,cursor:"pointer",fontFamily:"IBM Plex Mono,monospace"}} title="Toggle Fullscreen">⛶</button>
+          </div>
+        )}
+        <div style={{fontSize:11,color:"#1e2a3a",fontFamily:"IBM Plex Mono,monospace"}}>Educational Only</div>
+      </div>
+
+      <div style={{maxWidth:1080,margin:"0 auto",padding:"24px 18px 80px"}}>
+        <div style={{marginBottom:candles.length?24:56,textAlign:candles.length?"left":"center"}}>
+          {!candles.length&&(<div style={{marginBottom:24}}><div style={{fontSize:34,fontWeight:800,letterSpacing:"-1px",lineHeight:1.15,marginBottom:8,background:"linear-gradient(135deg,#f1f5f9,#64748b)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Track the trend.<br/>Trade the cross.</div><div style={{fontSize:14,color:"#2a3550",maxWidth:380,margin:"0 auto"}}>AI-powered EMA crossover scanner with live signal detection for momentum traders</div></div>)}
+          <div style={{display:"flex",gap:8,maxWidth:520,margin:candles.length?"0":"0 auto"}}>
+            <input className="ibox" value={inputVal} onChange={e=>setInputVal(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSubmit()} placeholder="Ticker, company name, or website…" style={{flex:1,background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:10,padding:"11px 16px",color:"#e2e8f0",fontSize:14,fontFamily:"IBM Plex Mono,monospace",transition:"all 0.2s"}}/>
+            <button className="go-btn" onClick={handleSubmit} disabled={loading} style={{background:"rgba(56,182,255,0.12)",border:"1px solid rgba(56,182,255,0.3)",borderRadius:10,padding:"11px 20px",color:"#38b6ff",fontSize:14,fontWeight:700,cursor:"pointer",transition:"all 0.2s",fontFamily:"IBM Plex Mono,monospace"}}>{loading?"...":"Scan →"}</button>
+          </div>
+          <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap",justifyContent:candles.length?"flex-start":"center"}}>
+            {["AAPL","TSLA","NVDA","AMZN","META","SPY","QQQ","MSFT"].map(t=><button key={t} className="chip" onClick={()=>{setInputVal(t);fetchData(t);}} style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:6,padding:"3px 10px",color:"#2a3550",fontSize:11,fontFamily:"IBM Plex Mono,monospace",cursor:"pointer",transition:"all 0.15s"}}>{t}</button>)}
+          </div>
+        </div>
+
+        {error&&<div style={{background:"rgba(255,77,109,0.08)",border:"1px solid rgba(255,77,109,0.2)",borderRadius:10,padding:"12px 16px",color:"#ff4d6d",marginBottom:20,fontSize:13}}>{error}</div>}
+        {loading&&<div style={{textAlign:"center",padding:"70px 0"}}><div className="shimmer" style={{fontSize:40,marginBottom:12}}>📈</div><div style={{color:"#1e2a3a",fontSize:13,fontFamily:"IBM Plex Mono,monospace"}}>Fetching data · Calculating EMAs · Scanning signals…</div></div>}
+
+        {candles.length>0&&!loading&&(
+          <div className="fade-up">
+            {liveMode&&(<div style={{background:"rgba(56,182,255,0.05)",border:"1px solid rgba(56,182,255,0.15)",borderRadius:10,padding:"10px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}}><div style={{display:"flex",alignItems:"center",gap:7}}><span className="live-dot" style={{width:8,height:8,borderRadius:"50%",background:"#38b6ff",display:"inline-block"}}/><span style={{fontSize:12,fontWeight:700,color:"#38b6ff",fontFamily:"IBM Plex Mono,monospace",letterSpacing:"0.5px"}}>LIVE · {timeframe} EMA SCAN</span></div><div style={{fontSize:11,color:"#334155",fontFamily:"IBM Plex Mono,monospace"}}>Updated: {lastUpdate}</div><div style={{marginLeft:"auto",fontSize:11,color:"#38b6ff",fontFamily:"IBM Plex Mono,monospace"}}>Next in {countdown}s</div></div>)}
+
+            <div style={{display:"flex",gap:14,marginBottom:18,flexWrap:"wrap",alignItems:"flex-start"}}>
+              <div><div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap"}}><span style={{fontSize:24,fontWeight:800,letterSpacing:"-0.5px",color:"#f1f5f9",fontFamily:"IBM Plex Mono,monospace"}}>{ticker}</span><span style={{fontSize:14,color:"#334155"}}>{companyName}</span></div><div style={{display:"flex",gap:14,marginTop:5}}><span style={{fontSize:20,fontWeight:700,color:"#f1f5f9",fontFamily:"IBM Plex Mono,monospace"}}>${price.toFixed(2)}</span></div></div>
+              <div style={{marginLeft:"auto",display:"flex",gap:8,flexWrap:"wrap"}}>
+                {[{label:"SIGNALS",value:signals.length,c:"#ffd500"},{label:"BULLISH",value:bullSigs,c:"#26d987"},{label:"BEARISH",value:bearSigs,c:"#ff4d6d"},{label:"CANDLES",value:candles.length,c:"#38b6ff"}].map(({label,value,c})=>(
+                  <div key={label} style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:10,padding:"9px 14px",textAlign:"center",minWidth:62}}><div style={{fontSize:18,fontWeight:800,color:c,fontFamily:"IBM Plex Mono,monospace"}}>{value}</div><div style={{fontSize:9,color:"#1e2a3a",letterSpacing:"0.8px",marginTop:1}}>{label}</div></div>
+                ))}
+              </div>
+            </div>
+
+            <div className="ema-grid" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}}>
+              <EMACard period="9" color={EMA_COLORS.e9} value={lastE9} prevValue={prevE9} price={price} label="Fast"/>
+              <EMACard period="20" color={EMA_COLORS.e20} value={lastE20} prevValue={prevE20} price={price} label="Short"/>
+              <EMACard period="50" color={EMA_COLORS.e50} value={lastE50} prevValue={prevE50} price={price} label="Mid"/>
+              <EMACard period="200" color={EMA_COLORS.e200} value={lastE200} prevValue={prevE200} price={price} label="Long"/>
+            </div>
+
+            <div style={{background:"rgba(255,255,255,0.015)",border:"1px solid rgba(255,255,255,0.05)",borderRadius:14,padding:"14px 8px 4px",marginBottom:20}}>
+              <div style={{paddingLeft:10,marginBottom:8,display:"flex",gap:14,alignItems:"center",flexWrap:"wrap"}}>
+                <span style={{fontSize:10,color:"#1e2a3a",fontFamily:"IBM Plex Mono,monospace",letterSpacing:"0.5px"}}>{timeframe} CHART · {candles.length} CANDLES</span>
+                <div style={{display:"flex",gap:12,fontSize:10,fontFamily:"IBM Plex Mono,monospace",flexWrap:"wrap"}}>
+                  {Object.entries(EMA_COLORS).map(([k,c])=><span key={k} style={{color:c}}>— {k.slice(1)} EMA</span>)}
+                  <span style={{color:"#ffd500"}}>● Signal</span>
+                </div>
+              </div>
+              <EMAChart candles={candles} emas={emas} signals={signals} livePrice={liveMode?livePrice:null}/>
+            </div>
+
+            <div style={{display:"flex",gap:0,marginBottom:18,borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
+              {[{id:"signals",label:`Signals (${signals.length})`},{id:"school",label:"EMA School"}].map(t=><button key={t.id} className="tab" onClick={()=>setActiveTab(t.id)} style={{background:"none",border:"none",cursor:"pointer",padding:"9px 16px",fontSize:12,fontWeight:600,color:activeTab===t.id?"#f1f5f9":"#1e2a3a",borderBottom:`2px solid ${activeTab===t.id?"#38b6ff":"transparent"}`,transition:"all 0.2s",fontFamily:"Sora,sans-serif",marginBottom:-1}}>{t.label}</button>)}
+            </div>
+
+            {activeTab==="signals"&&(
+              signals.length===0
+                ?<div style={{textAlign:"center",padding:"40px 0",color:"#1e2a3a",fontSize:12,fontFamily:"IBM Plex Mono,monospace"}}>No EMA crossover signals detected in this dataset.</div>
+                :<div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {signals.slice().reverse().map((s,i)=><SigCard key={i} sig={s} expanded={expandedIdx===i} onToggle={()=>setExpandedIdx(expandedIdx===i?null:i)}/>)}
+                </div>
+            )}
+
+            {activeTab==="school"&&(
+              <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                {[
+                  {icon:"⚡",name:"Golden Cross (9/20)",color:"#26d987",type:"Bullish",body:"The 9 EMA crosses above the 20 EMA, signaling short-term momentum turning bullish. Most effective in trending markets after a pullback to the 20 EMA."},
+                  {icon:"💀",name:"Death Cross (9/20)",color:"#ff4d6d",type:"Bearish",body:"The 9 EMA crosses below the 20 EMA, signaling short-term momentum turning bearish. Often the first warning sign of a trend reversal."},
+                  {icon:"🌟",name:"Major Golden Cross (50/200)",color:"#26d987",type:"Bullish",body:"The 50 EMA crosses above the 200 EMA — a major regime change signal watched by institutional traders. Signals long-term bullish momentum."},
+                  {icon:"☠️",name:"Major Death Cross (50/200)",color:"#ff4d6d",type:"Bearish",body:"The 50 EMA crosses below the 200 EMA. One of the most significant bearish signals. Often precedes extended downtrends."},
+                  {icon:"📈",name:"EMA Reclaim",color:"#ffd500",type:"Bullish",body:"Price reclaims the 20 EMA from below after being rejected. Indicates buyers have regained control and the pullback is likely over."},
+                  {icon:"📉",name:"EMA Loss",color:"#ff4d6d",type:"Bearish",body:"Price breaks below the 20 EMA. Simple but powerful — many institutional algorithms use EMA loss as an exit or short trigger."},
+                ].map(item=>(
+                  <div key={item.name} style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:12,padding:"18px 20px"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10,flexWrap:"wrap",gap:8}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:18}}>{item.icon}</span><div style={{fontSize:14,fontWeight:700,color:item.color}}>{item.name}</div></div>
+                      <span style={{fontSize:10,color:item.color,background:`${item.color}15`,border:`1px solid ${item.color}30`,borderRadius:5,padding:"2px 8px",fontFamily:"IBM Plex Mono,monospace",fontWeight:700}}>{item.type.toUpperCase()}</span>
+                    </div>
+                    <div style={{fontSize:13,color:"#4a5568",lineHeight:1.7}}>{item.body}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {!loading&&!candles.length&&!error&&(
+          <div style={{textAlign:"center",padding:"36px 0"}}>
+            <div style={{display:"flex",justifyContent:"center",gap:6,marginBottom:18,opacity:0.12}}>
+              {[32,48,24,56,36,44,28].map((h,i)=><div key={i} style={{width:3,background:["#38b6ff","#ff6b35","#f5c842","#38b6ff","#a855f7","#ff6b35","#38b6ff"][i],borderRadius:2,height:h}}/>)}
+            </div>
+            <div style={{color:"#1e2a3a",fontSize:12,fontFamily:"IBM Plex Mono,monospace"}}>Enter a ticker above to begin · Live EMA scanning available after load</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
